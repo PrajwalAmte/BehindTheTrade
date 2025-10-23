@@ -1,7 +1,12 @@
 import { useEffect, useState, useRef } from 'react';
 import { MarketData } from '../types';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
+// const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
+const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  (window.location.protocol === 'https:'
+    ? `wss://${window.location.host}`
+    : `ws://${window.location.host}`);
 
 export function useWebSocket() {
   const [data, setData] = useState<MarketData>({
