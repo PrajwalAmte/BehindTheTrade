@@ -1,39 +1,31 @@
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
-import { createServer } from 'http';import path from 'path';
+import { createServer } from 'http';
+import path from 'path';
 import { fileURLToPath } from 'url';
-
 
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-//For Deployement
+// Resolve file paths (for ESM)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'dist')));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-  });
-}
-
+// Middlewares
 app.use(cors());
 app.use(express.json());
 
-const orderBook = {
-  bids: [],
-  asks: []
-};
-
+// In-Memory State
+const orderBook = { bids: [], asks: [] };
 const trades = [];
 const clearingLedger = [];
 let orderIdCounter = 1;
 let tradeIdCounter = 1;
 let settledCount = 0;
 
+// Matching Logic 
 function matchOrders() {
   const matches = [];
 
@@ -49,7 +41,7 @@ function matchOrders() {
       const matchQuantity = Math.min(bestBid.quantity, bestAsk.quantity);
 
       const trade = {
-        id: String(tradeIdCounter++), // Convert to string
+        id: String(tradeIdCounter++),
         price: matchPrice,
         quantity: matchQuantity,
         buyOrderId: bestBid.id,
@@ -72,12 +64,8 @@ function matchOrders() {
       bestBid.quantity -= matchQuantity;
       bestAsk.quantity -= matchQuantity;
 
-      if (bestBid.quantity === 0) {
-        orderBook.bids.shift();
-      }
-      if (bestAsk.quantity === 0) {
-        orderBook.asks.shift();
-      }
+      if (bestBid.quantity === 0) orderBook.bids.shift();
+      if (bestAsk.quantity === 0) orderBook.asks.shift();
     } else {
       break;
     }
@@ -86,6 +74,7 @@ function matchOrders() {
   return matches;
 }
 
+// Settlement Logic
 function settleTrades() {
   const now = Date.now();
   clearingLedger.forEach(entry => {
@@ -95,18 +84,12 @@ function settleTrades() {
       settledCount++;
 
       const trade = trades.find(t => t.id === entry.tradeId);
-      if (trade) {
-        trade.status = 'settled';
-      }
+      if (trade) trade.status = 'settled';
     }
   });
 }
 
-setInterval(() => {
-  settleTrades();
-  broadcastUpdate();
-}, 1000);
-
+// Broadcast Updates to Clients 
 function broadcastUpdate() {
   const data = JSON.stringify({
     orderBook,
@@ -116,15 +99,18 @@ function broadcastUpdate() {
   });
 
   wss.clients.forEach(client => {
-    if (client.readyState === 1) {
-      client.send(data);
-    }
+    if (client.readyState === 1) client.send(data);
   });
 }
 
+setInterval(() => {
+  settleTrades();
+  broadcastUpdate();
+}, 1000);
+
+// API Routes
 app.post('/api/orders', (req, res) => {
   const { side, price, quantity } = req.body;
-
   const order = {
     id: orderIdCounter++,
     side,
@@ -133,33 +119,18 @@ app.post('/api/orders', (req, res) => {
     timestamp: Date.now()
   };
 
-  if (side === 'buy') {
-    orderBook.bids.push(order);
-  } else {
-    orderBook.asks.push(order);
-  }
+  if (side === 'buy') orderBook.bids.push(order);
+  else orderBook.asks.push(order);
 
   const matches = matchOrders();
   broadcastUpdate();
 
-  res.json({
-    success: true,
-    order,
-    matches
-  });
+  res.json({ success: true, order, matches });
 });
 
-app.get('/api/book', (req, res) => {
-  res.json(orderBook);
-});
-
-app.get('/api/trades', (req, res) => {
-  res.json(trades.slice(-20));
-});
-
-app.get('/api/ledger', (req, res) => {
-  res.json(clearingLedger.slice(-20));
-});
+app.get('/api/book', (req, res) => res.json(orderBook));
+app.get('/api/trades', (req, res) => res.json(trades.slice(-20)));
+app.get('/api/ledger', (req, res) => res.json(clearingLedger.slice(-20)));
 
 app.post('/api/reset', (req, res) => {
   orderBook.bids = [];
@@ -181,6 +152,7 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// WebSocket Handling 
 wss.on('connection', (ws) => {
   ws.send(JSON.stringify({
     orderBook,
@@ -190,7 +162,17 @@ wss.on('connection', (ws) => {
   }));
 });
 
+// Serve Frontend in Production
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, 'dist')));
+  // ✅ FIX: Use '/*' instead of '*' to prevent path-to-regexp crash
+  app.get('/*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  });
+}
+
+// Start Server 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`Backend server running on port ${PORT}`);
+  console.log(`✅ Backend server running on port ${PORT}`);
 });
